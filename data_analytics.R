@@ -25,7 +25,9 @@ plot_boxplot <- function(sdata, metric = 'logFC'){
   p = ggplot(sdata , aes(x = time, y = sdata[[metric]],
                       colour = group, fill=group)) +
     geom_boxplot(outlier.colour="black", outlier.shape=8,
-                 outlier.size=1, notch=TRUE)+
+                 outlier.size=1, notch=FALSE) +
+    geom_smooth(method = "loess", se=FALSE, aes(group=2), col = 'purple',
+                size = 0.6) + 
     theme(panel.background = element_blank(),
           axis.text.x = element_text(angle = 90, hjust = 1, size = 6),
           strip.text = element_text(size = 6)) +
@@ -607,11 +609,11 @@ create_graphs <- function(data_res, gene_group, name_group){
                                      "gene_id")]
   defence_genes <- defence_genes[, c("class", "group", "subgroup", "annotation", 
                                      "gene_id")]
-  
+  break
   
   for(tgene in list(hormone_genes, defence_genes)){
   
-    sdata <- p2(tgene, n, 'logFC')
+   # sdata <- p2(tgene, n, 'logFC')
     sdata_el <- p2(tgene, n, 'logFC')
     plot_boxplot(sdata_el, 'logFC')
     plot_heatmap(sdata_el, 'logFC')
