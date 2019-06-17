@@ -17,20 +17,25 @@ library(gridExtra)
 
 #' plot plot_boxplot
 #' @param gene annotation data
-plot_boxplot <- function(sdata, metric = 'logFC'){
+plot_boxplot <- function(sdata, metric = 'logFC', xf = 6, lf = 1, pathname){
+  print(pathname)
   
-  
-  tiff(paste(sdata$class, '_', 'genes.tiff', sep = ''), width = 1280, height = 780,
+  tiff(paste(pathname,sdata$class, '_', 'genes.tiff', sep = ''),
+       width = 1280, height = 780,
        res = 180)
   p = ggplot(sdata , aes(x = time, y = sdata[[metric]],
                       colour = group, fill=group)) +
-    geom_boxplot(outlier.colour="black", outlier.shape=8,
+    geom_boxplot(outlier.colour="black", outlier.shape = 8,
                  outlier.size=1, notch=FALSE) +
     geom_smooth(method = "loess", se=FALSE, aes(group=2), col = 'purple',
-                size = 0.6) + 
+                size = 0.9) + 
     theme(panel.background = element_blank(),
-          axis.text.x = element_text(angle = 90, hjust = 1, size = 6),
-          strip.text = element_text(size = 6)) +
+          axis.text.x = element_text(angle = 90, hjust = 1, size = xf),
+          axis.text.y = element_text(size = 6),
+          strip.text = element_text(size = 6),
+          legend.text=element_text(size=4),
+          legend.key.size = unit(lf, 'line'),
+          legend.position = "none") +
     labs(y = metric) +
     geom_hline(yintercept = c(1, -1), linetype="dashed",
                color = "black", size = 0.2) +
@@ -38,16 +43,16 @@ plot_boxplot <- function(sdata, metric = 'logFC'){
   print(p)
   dev.off()
   
-  
 }
+
 
 #' plot_heatmap
 #' @param gene annotation data
-plot_heatmap <- function(sdata, metric = 'logFC'){
+plot_heatmap <- function(sdata, metric = 'logFC', gname, pathname){
   
-  for(g in unique(sdata$group)){
+  for(g in unique(sdata[[gname]])){
     
-    tiff(paste(sdata$class, '_', gsub(' ', '', g), '.tiff', sep =''), 
+    tiff(paste(pathname, sdata$class, '_', gsub(' ', '', g), '.tiff', sep =''), 
          width = 680, height = 780,
          res = 180)
     ss <- subset(sdata, group == g)
@@ -61,6 +66,8 @@ plot_heatmap <- function(sdata, metric = 'logFC'){
             axis.text.x = element_text(angle = 90, hjust = 1, size = 6), 
             axis.text.y = element_text(size = 4),
             strip.text = element_text(size = 6)) +
+            #axis.text.y = element_blank(),
+            #axis.ticks.y = element_blank()) + 
       scale_fill_gradient2(low = "darkgreen", mid = "white", high = "darkred") + 
       facet_grid(annotation ~ key,  drop = TRUE, scales = "free", 
                  space = 'free')
@@ -75,10 +82,8 @@ plot_heatmap <- function(sdata, metric = 'logFC'){
 
 
 
-p2 <- function(t_genesn, n, metric = 'logFC'){
+p2 <- function(subn_hor, n, metric = 'logFC'){
   
- 
-  subn_hor <- merge(t_genesn, n, by.x = 'gene_id', by.y = 'y')
   meta_name <- c("gene_id", "class", "group", "subgroup", 'annotation',
                  "Human-Readable-Description")
 
@@ -343,11 +348,11 @@ perform_analytics_fast <- function(g, y, fit, cont_vec, annot_file,
   qlf <- glmQLFTest(fit, contrast = cont_vec[['vector']])
   print(topTags(qlf, p.value = 0.01))
   #summary(decideTests(qlf))
-  #plotMD(qlf)
-  #abline(h=c(-1, 1), col="blue")
+  plotMD(qlf)
+  abline(h=c(-1, 1), col="blue")
   
   
-  
+  # Search for expression data for cont_vec experiment in exp settings
   i = match(sub_exp_settings$sample[union(which(sub_exp_settings$p ==
                                                    cont_vec$s1), 
                                               which(sub_exp_settings$p == 
@@ -458,13 +463,20 @@ populate_network <- function(sdata, thr = 0.01){
 #' @param sdata raw dataset
 #' @param annot_file annotation file
 
-perform_analytics <- function(sdata, annot_file, design){
+perform_analytics <- function(sdata, annot_file, design, filop){
   
   
   y <- DGEList(counts = sub_g[, -1, with=FALSE])
   
   # Remove counts according to threshold
-  keep <- rowSums(cpm(y) > 1) >= 2
+  if(filop == 1){
+    keep <- rowSums(cpm(y) > 1) >= 2
+  } else{
+    keep <- filterByExpr(y)
+  }
+    # 2 keep <- rowSums(cpm(y) > 1) >= 3
+  #
+  #keep <- rowSums(cpm(y) > 6)
   y <- y[keep, keep.lib.sizes = FALSE]
   
   # Normalise data
@@ -475,6 +487,7 @@ perform_analytics <- function(sdata, annot_file, design){
   save(y, file = 'y.dat')
   # Perform counts
   #load('y.dat')
+  # Perform quasi-likelihood F-tests
   fit <- glmQLFit(y, design)
   save(fit, file ='fit.dat')
   # qlf <- glmQLFTest(fit, contrast = c(rep(-1, 14), rep(1, 14)))
@@ -492,7 +505,7 @@ perform_analytics <- function(sdata, annot_file, design){
   # m <- c('Row.names', 'EB.y')
   # all_tags <- all_tags[, -match(m, colnames(all_tags))]
   
-  return(all_tags)
+  return(list(fit = fit, y = y))
   
 }
 
@@ -530,18 +543,19 @@ create_graphs <- function(data_res, gene_group, name_group){
   can_genes_eleni <- read.csv('gene_list.csv', header = TRUE)
   hormone_genes <- read.csv('hormone_heatmap_annotation.csv', header = TRUE)
   defence_genes <- read.csv('defence_heatmap_annotation.csv', header = TRUE)
+  annot_file <- fread('iwgsc_refseq_wheat_ALL_HC_LC.txt', header=TRUE,
+                      sep = '\t')
+  exp_settings <- read.csv('exp_settings.csv', header = TRUE)
+  
   test <- 'treat'
   load('wheat.dat')
+  #load('fit.dat')
+  #load('y.dat')
+  
   
   i <- grep('Traes', wheat$data$rn)
   ii <- setdiff(1:nrow(wheat$data), i)
   g <- wheat$data[i, ]
-
-  annot_file <- fread('iwgsc_refseq_wheat_ALL_HC_LC.txt', header=TRUE,
-                      sep = '\t')
-  exp_settings <- read.csv('exp_settings.csv', header = TRUE)
-   
-  
   sub_exp_settings <- filter(exp_settings, time > 0)
   sub_exp_settings <- mutate(sub_exp_settings, p = paste(treat, time, 
                                                          tissue, sep='_'))
@@ -551,72 +565,119 @@ create_graphs <- function(data_res, gene_group, name_group){
   design <- model.matrix(~ 0 + sub_exp_settings$p)
   colnames(design) <- levels(sub_exp_settings$p)
   
-  load('y.dat')
-  logcpm <- cpm(y, prior.count = 2, log=TRUE)
-  load('fit.dat')
   
-  #tp = unique(sub_exp_settings$time); tr = unique(sub_exp_settings$tissue);
-  con_mat <- create_con_mat(fit, unique(sub_exp_settings$time), 
-                            unique(sub_exp_settings$tissue))
+  pathname <- c('norm_filter/', 'str_filter/')
   
-  data_res <- net_res <- net_res_cg <- list()
-  
-  cl <- makeCluster(detectCores() -1)
-  registerDoParallel(cl)
-  
-  
-  # foreach(exp_name = names(con_mat)) %do% {
-  #    #g = g[,1:2]; y; fit; cont_vec = con_mat[[exp_name]]; annot_file
-  #    if(sum(con_mat[[exp_name]][['vector']] == 0) ==
-  #       length(con_mat[[exp_name]][['vector']])){
-  # 
-  #      data_res[[exp_name]] = 0
-  #    } else{
-  # 
-  #      data_res[[exp_name]] <- perform_analytics_fast(g[,1:2], y, fit,
-  #                                 con_mat[[exp_name]],
-  #                               annot_file, sub_exp_settings, logcpm)
-  #    }
-  # }
-  
-  
-  #save(data_res, file = 'data_res.dat')
-  
-  #break
-  load('data_res.dat')
-  FDR_ <- 0.05
-  logFC <- c(-1, -1)
-  gene_names <- c()
-  treat_name <- c()
-# 
-#   for(exp_name in names(data_res)[7:24]){
-#     if(data_res[[exp_name]] != 0){
-#       
-#       print(exp_name)
-#       s <- subset(data_res[[exp_name]], FDR <= FDR_ & (logFC > logFC[1] 
-#             | logFC < logFC[1]))
-#       print(dim(s))
-#       if(dim(s)[1] != 0){
-#         treat_name <- append(treat_name, exp_name)
-#         gene_names <- unique(unique(s[['y']]), gene_names)
-#       }
-#     }
-#   }
-  
-  
-  n <- get_score_data(data_res, 'logFC')
-  hormone_genes <- hormone_genes[, c("class", "group", "subgroup", "annotation", 
-                                     "gene_id")]
-  defence_genes <- defence_genes[, c("class", "group", "subgroup", "annotation", 
-                                     "gene_id")]
-  break
-  
-  for(tgene in list(hormone_genes, defence_genes)){
-  
-   # sdata <- p2(tgene, n, 'logFC')
-    sdata_el <- p2(tgene, n, 'logFC')
-    plot_boxplot(sdata_el, 'logFC')
-    plot_heatmap(sdata_el, 'logFC')
+  #Calculate fit
+  for(ftype in 1:1){
+    p <- perform_analytics(sub_g, annot_file, design, ftype)
+    fit <- p$fit
+    y <- p$y
     
-  }
+    
+    # Normalise data
+    # Compute counts per million (CPM) or reads per kilobase per million (RPKM)
+    logcpm <- cpm(y, prior.count = 2, log=TRUE)
+    
+    
+    #Create design matrix
+    con_mat <- create_con_mat(fit, unique(sub_exp_settings$time), 
+                               unique(sub_exp_settings$tissue))
+    
+     data_res <- net_res <- net_res_cg <- list()
+  
+     cl <- makeCluster(detectCores() -1)
+     registerDoParallel(cl)
+    
+     pdf(paste(pathname[ftype], '_FCplot.pdf', sep =''))
+     
+     foreach(exp_name = names(con_mat)) %do% {
+        g = g[,1:2]; cont_vec = con_mat[[exp_name]]
+        if(sum(con_mat[[exp_name]][['vector']] == 0) ==
+           length(con_mat[[exp_name]][['vector']])){
+    
+          data_res[[exp_name]] = 0
+        } else{
+    
+          data_res[[exp_name]] <- perform_analytics_fast(g[,1:2], y, fit,
+                                     con_mat[[exp_name]],
+                                   annot_file, sub_exp_settings, logcpm)
+        }
+     }
+    
+    dev.off()
+    
+    #save(data_res, file = 'data_res.dat')
+    
+   #Check that columns match
+   sapply(con_mat, function(x) colnames(fit)[which(x[['vector']] != 0)])
+    
+   
+   #load('data_res.dat')
+  
+   n <- get_score_data(data_res, 'logFC')
+   hormone_genes <- hormone_genes[, c("class", "group", "subgroup", "annotation", 
+                                       "gene_id")]
+   defence_genes <- defence_genes[, c("class", "group", "subgroup", "annotation", 
+                                      "gene_id")]
+   
+   gene_table <- rbind(hormone_genes, defence_genes)
+   gene_table <- merge(gene_table, n, by.x = 'gene_id', by.y = 'y')
+   
+   
+   
+   # hormone
+   
+  
+   sdata_el <- p2(subset(gene_table[, -match('S_120h', colnames(gene_table))], 
+                         class == 'hormone'), n, 'logFC')
+   plot_boxplot(sdata_el, 'logFC', 6,1, pathname[ftype])
+   plot_heatmap(sdata_el, 'logFC', 'group', pathname[ftype])
+  
+   # defence 
+   sdata_el <- p2(subset(gene_table[, -match('S_120h', colnames(gene_table))], 
+                         class == 'defence'), n, 'logFC')
+   plot_boxplot(sdata_el, 'logFC', 2, 0.5, pathname[ftype] )
+   plot_heatmap(sdata_el, 'logFC', 'group', pathname[ftype] )
+      
 
+  }
+  
+ #    break
+ # 
+ # b <- c('chitinase', 'auxin', 'Rg4', 'glucanase')
+ # 
+ # 
+ # #pattern <- paste0('^\\w*', b[2], '\\w*$', collapse = '|')
+ # 
+ # pdf('p.pdf')
+ # for(tname in b){
+ #   i <- grep(tname, n$`Human-Readable-Description`)
+ #      if(length(i) > 0){
+ #        m <- separate(melt(n[i,]), variable, into=c('tissue', 'time'), '_')
+ #        #m[['time']] <- as.numeric(m[['time']])
+ #        m[['time']] <- ordered(m[['time']],levels=c("1h", "5h", "24h", "48h", 
+ #                                            "72h",  "120h", "168h"))
+ #        p <- ggplot(m, aes(x = time, y = value)) + 
+ #          geom_boxplot(outlier.colour="black", outlier.shape=8,
+ #                       outlier.size=1, notch=FALSE) +
+ #          facet_grid(tissue ~.) +
+ #          geom_hline(yintercept = c(2, -2), linetype="dashed",
+ #                     color = "red", size = 0.2) +
+ #          theme(panel.background = element_blank()) +
+ #          ggtitle(tname)
+ #       
+ #        print(p)
+ #      }
+ #      
+ #  }
+ # 
+ # dev.off()
+ # 
+ # 
+ # 
+ # o = unlist(sapply(n$`Human-Readable-Description`[grep('monooxygenase', 
+ #                                            n$`Human-Readable-Description`)], 
+ #        function(x) grep('P450', x)))
+ # 
+ # match(names(o), n$`Human-Readable-Description`)
